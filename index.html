@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Go CLI Simulator</title>
+  <link rel="stylesheet" href="/static/css/terminal.css">
+</head>
+<body>
+  <!-- ============================================================ -->
+  <!-- DESKTOP -->
+  <!-- ============================================================ -->
+  <div class="desktop">
+    <div class="window">
+      <!-- Title bar -->
+      <div class="titlebar">
+        <div class="traffic-lights">
+          <button class="tl-btn tl-close" title="Close" onclick="windowCtrl('close')">
+            <svg viewBox="0 0 12 12" width="12" height="12">
+              <path fill="#4b0000" d="M6.707 6l3.146-3.146a.5.5 0 0 0-.707-.708L6 5.293 2.854 2.146a.5.5 0 1 0-.708.708L5.293 6l-3.147 3.146a.5.5 0 0 0 .708.708L6 6.707l3.146 3.147a.5.5 0 0 0 .708-.708L6.707 6z"/>
+            </svg>
+          </button>
+          <button class="tl-btn tl-minimize" title="Minimize" onclick="windowCtrl('minimize')">
+            <svg viewBox="0 0 12 12" width="12" height="12">
+              <rect x="2" y="5.5" width="8" height="1" fill="#4b3f00"/>
+            </svg>
+          </button>
+          <button class="tl-btn tl-maximize" title="Maximize" onclick="windowCtrl('maximize')">
+            <svg viewBox="0 0 12 12" width="12" height="12">
+              <rect x="2" y="2" width="8" height="8" fill="none" stroke="#4b3f00" stroke-width="1"/>
+            </svg>
+          </button>
+        </div>
+        <div class="titlebar-title">go run — bash — 120×40</div>
+        <div class="titlebar-spacer"></div>
+      </div>
+
+      <!-- Terminal body -->
+      <div class="terminal-body" id="terminalBody">
+        <div class="terminal-output" id="terminalOutput"></div>
+        <div class="input-line" id="inputLine">
+          <span class="prompt-user">user@kasming</span><span class="prompt-at">:</span><span class="prompt-path">~</span><span class="prompt-dollar">$</span>
+          <span class="prompt-space">&nbsp;</span>
+          <span class="input-area" id="inputArea" contenteditable="true" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></span>
+          <span class="cursor" id="cursor"></span>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="terminal-footer" id="terminalFooter">
+        <span class="footer-info">
+          <span class="fg-green">Go CLI Simulator</span> ·
+          Type <span class="fg-yellow">gonano</span> to open text editor ·
+          Press <span class="fg-yellow">Enter</span> to execute ·
+          <span class="fg-blue">Ctrl+L</span> clear ·
+          <span class="fg-blue">↑↓</span> history
+        </span>
+        <span class="footer-status" id="footerStatus"></span>
+      </div>
+    </div>
+
+    <!-- Taskbar -->
+    <div class="taskbar">
+      <div class="taskbar-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="#00ff00">
+          <polygon points="1,1 23,12 1,23"/>
+        </svg>
+      </div>
+      <span class="taskbar-text">Go CLI</span>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- GONANO TEXT EDITOR -->
+  <!-- ============================================================ -->
+  <div id="gonano-editor" class="gonano-overlay">
+
+    <div class="gonano-window">
+
+      <!-- Title bar -->
+      <div class="gonano-titlebar">
+        <span class="gonano-title-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="#3fb950">
+            <polygon points="1,1 23,12 1,23"/>
+          </svg>
+        </span>
+        <span class="gonano-title-text">GNU nano 7.2 — Go Editor</span>
+        <span class="gonano-title-tabs">
+          <span class="gonano-tab gonano-tab-active">
+            <span class="gonano-tab-sep">[</span>main.go<span class="gonano-tab-sep">]</span>
+            <span class="gonano-tab-modified"></span>
+          </span>
+        </span>
+        <span class="gonano-title-align"></span>
+      </div>
+
+      <!-- Editor body: GUTTER + TEXTAREA -->
+      <!-- INI YANG PERLU — wrapping container agar sinkron scroll -->
+      <div class="gonano-editor-body">
+        <!-- Line numbers (kiri) -->
+        <div class="gonano-gutter" id="gonanoGutter">
+          <!-- Line numbers di-generate oleh JS -->
+        </div>
+        <!-- Text area (kanan) -->
+        <textarea
+          id="gonano-textarea"
+          class="gonano-textarea"
+          spellcheck="false"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          placeholder="// Type your Go code here..."
+        ></textarea>
+      </div>
+
+      <!-- Status bar -->
+      <div class="gonano-statusbar">
+        <span class="gonano-status-left" id="gonano-status-left">[ Welcome to nano.  Type a Go program and use Ctrl+R to run. ]</span>
+        <span class="gonano-status-right" id="gonano-status-right">UTF-8  |  Go  |  main.go</span>
+      </div>
+
+      <!-- Shortcut bar -->
+      <div class="gonano-shortcutbar">
+        <span class="gonano-shortcut">
+          <span class="gonano-key">^X</span> Exit
+        </span>
+        <span class="gonano-shortcut-sep"></span>
+        <span class="gonano-shortcut">
+          <span class="gonano-key">^R</span> Run Go
+        </span>
+        <span class="gonano-shortcut-sep"></span>
+        <span class="gonano-shortcut">
+          <span class="gonano-key">Esc</span> Cancel
+        </span>
+      </div>
+
+      <!-- Popup menu -->
+      <div class="gonano-menu" id="gonano-menu">
+        <div class="gonano-menu-header" id="gonano-menu-header">^R — Execute</div>
+        <div class="gonano-menu-body" id="gonano-menu-body">
+          <!-- Diisi oleh JS -->
+        </div>
+      </div>
+
+    </div><!-- /gonano-window -->
+  </div><!-- /gonano-overlay -->
+
+  <script src="/static/js/terminal.js"></script>
+</body>
+</html>
