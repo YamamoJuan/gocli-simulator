@@ -3,13 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +18,16 @@ import (
 var (
 	tmpDir    string
 	tmpDirMux sync.Mutex
-
-	// Resolve root directory sekali saat startup
-	rootDir string
 )
+
+//go:embed index.html
+var indexHTML string
+
+//go:embed static/css/terminal.css
+var terminalCSS string
+
+//go:embed static/js/terminal.js
+var terminalJS string
 
 func init() {
 	var err error
@@ -29,131 +35,55 @@ func init() {
 	if err != nil {
 		log.Fatalf("Failed to create tmp dir: %v", err)
 	}
-
-	// Resolve root directory saat startup
-	rootDir = resolveRootDir()
-	log.Printf("📂 Project root: %s", rootDir)
 	log.Printf("📁 Temp directory: %s", tmpDir)
-}
-
-// resolveRootDir mencari direktori project (tempat index.html ada)
-func resolveRootDir() string {
-	exe, err := os.Executable()
-	if err != nil {
-		log.Printf("⚠️  Could not determine executable path: %v", err)
-		exe = ""
-	}
-
-	// Lokasi-lokasi yang perlu dicek
-	candidates := []string{
-		".",              // current directory
-		"..",             // parent (jika exe dijalankan dari subdirektori bin/)
-		"../..",          // grandparent
-		"../../..",       // great-grandparent
-		"../../../..",    // great-great-grandparent (Vercel depth)
-		"../../../../..", // max depth untuk Vercel
-	}
-
-	// Jika kita tahu path executable, mulai dari direktori parentnya
-	if exe != "" {
-		exeDir := filepath.Dir(exe)
-		// Vercel: exe ada di seperti .output/go/main atau /var/task/.output/go/main
-		// index.html ada di root project, jadi perlu naik beberapa level
-		for depth := 1; depth <= 6; depth++ {
-			dir := exeDir
-			for i := 0; i < depth; i++ {
-				dir = filepath.Dir(dir)
-			}
-			candidates = append(candidates, dir)
-		}
-	}
-
-	// Cek semua kandidat
-	for _, dir := range candidates {
-		indexPath := filepath.Join(dir, "index.html")
-		staticPath := filepath.Join(dir, "static")
-
-		if _, err := os.Stat(indexPath); err == nil {
-			if _, err := os.Stat(staticPath); err == nil {
-				log.Printf("✅ Found project root at: %s", dir)
-				return dir
-			}
-		}
-	}
-
-	// Fallback: asumsikan current directory
-	log.Printf("⚠️  Could not auto-detect project root, using '.'")
-	return "."
-}
-
-// getFilePath mengembalikan absolute path relatif terhadap rootDir
-func getFilePath(name string) string {
-	return filepath.Join(rootDir, name)
-}
-
-// fileExists mengecek apakah file ada
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	log.Printf("✅ index.html embedded (%d bytes)", len(indexHTML))
+	log.Printf("✅ terminal.css embedded (%d bytes)", len(terminalCSS))
+	log.Printf("✅ terminal.js embedded (%d bytes)", len(terminalJS))
 }
 
 func main() {
 	port := getEnvOrDefault("PORT", "8080")
 
-	// Serve static files dari direktori static yang sudah di-resolve
-	staticDir := getFilePath("static")
-	if !fileExists(staticDir) {
-		log.Printf("❌ Static directory not found at: %s", staticDir)
-	} else {
-		staticFS := http.FileServer(http.Dir(staticDir))
-		http.Handle("/static/", http.StripPrefix("/static/", staticFS))
-		log.Printf("📦 Serving static files from: %s", staticDir)
-	}
-
-	// Serve index.html
+	// ── Serve index.html ───────────────────────────────────────
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Jika path /run, handle sebagai POST execution
+		// Jika POST /run, handle execute
 		if r.URL.Path == "/run" && r.Method == http.MethodPost {
 			handleRun(w, r)
 			return
 		}
 
-		// Untuk GET / atau route lain, serve index.html
-		indexPath := getFilePath("index.html")
-		if !fileExists(indexPath) {
-			log.Printf("❌ index.html not found at: %s", indexPath)
-			// Coba berbagai fallback
-			fallbacks := []string{
-				filepath.Join(rootDir, "index.html"),
-				"index.html",
-				"../index.html",
-				"../../index.html",
-				"../../../index.html",
-			}
-			found := false
-			for _, f := range fallbacks {
-				if fileExists(f) {
-					indexPath = f
-					log.Printf("✅ Using fallback index.html: %s", f)
-					found = true
-					break
-				}
-			}
-			if !found {
-				http.Error(w, "index.html not found", http.StatusInternalServerError)
-				return
-			}
+		// Favicon → serve inline SVG
+		if r.URL.Path == "/favicon.ico" || r.URL.Path == "/favicon.png" {
+			w.Header().Set("Content-Type", "image/svg+xml")
+			w.Write([]byte(faviconSVG))
+			return
 		}
 
-		http.ServeFile(w, r, indexPath)
+		// Serve index.html
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		fmt.Fprint(w, indexHTML)
 	})
 
-	// Handle code execution (POST only)
+	// ── Serve CSS ──────────────────────────────────────────────
+	http.HandleFunc("/static/css/terminal.css", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		fmt.Fprint(w, terminalCSS)
+	})
+
+	// ── Serve JS ───────────────────────────────────────────────
+	http.HandleFunc("/static/js/terminal.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		fmt.Fprint(w, terminalJS)
+	})
+
+	// ── Handle code execution ──────────────────────────────────
 	http.HandleFunc("/run", handleRun)
 
 	log.Printf("🌟 Web CLI Simulator running at http://localhost:%s", port)
-	log.Printf("🌐 Serving from project root: %s", rootDir)
-	log.Printf("💡 PORT env=%s, fallback=8080", os.Getenv("PORT"))
+	log.Printf("💡 All static files embedded in binary — no external files needed")
 
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatalf("Server error: %v", err)
@@ -165,7 +95,6 @@ func main() {
 // ============================================================
 func handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		// Jika GET, return 404 (API only)
 		http.Error(w, "Not Found — use POST to execute code", http.StatusNotFound)
 		return
 	}
@@ -183,7 +112,6 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Execute dengan timeout 15 detik
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -196,9 +124,7 @@ type execResult struct {
 	stderr string
 }
 
-// executeCodeCtx menjalankan kode dengan context untuk timeout
 func executeCodeCtx(ctx context.Context, code string) execResult {
-	// Tulis kode ke file temporary
 	tmpDirMux.Lock()
 	tmpFile, err := os.CreateTemp(tmpDir, "code-*.go")
 	tmpDirMux.Unlock()
@@ -214,7 +140,6 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 		return execResult{stderr: "Failed to write code: " + err.Error()}
 	}
 
-	// Execute
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "go", "run", filePath)
 	cmd.Dir = tmpDir
@@ -268,7 +193,6 @@ func escapeJSON(s string) string {
 		case r == '\t':
 			buf.WriteString(`\t`)
 		case r < ' ' || r == 127:
-			// skip control chars
 		default:
 			buf.WriteRune(r)
 		}
@@ -282,3 +206,8 @@ func getEnvOrDefault(key, def string) string {
 	}
 	return def
 }
+
+// ============================================================
+// FAVICON SVG
+// ============================================================
+const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#3fb950"><polygon points="1,1 23,12 1,23"/></svg>`
