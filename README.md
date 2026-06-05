@@ -1,4 +1,3 @@
-cat << 'EOF' > README.md
 # Go CLI Simulator
 
 A web-based terminal simulator for running Go code directly in the browser.
