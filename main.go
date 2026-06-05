@@ -29,15 +29,14 @@ var terminalCSS string
 //go:embed static/js/terminal.js
 var terminalJS string
 
-// logStdout redirects log output to stdout so Vercel categorizes it as info, not error
 func init() {
-	// Redirect stderr to stdout untuk menghindari "error" level di Vercel
+	// Redirect ke stdout agar Vercel kategorikan sebagai info, bukan error
 	log.SetOutput(os.Stdout)
 
 	var err error
 	tmpDir, err = os.MkdirTemp("", "go-cli-*")
 	if err != nil {
-		log.Fatalf("Failed to create tmp dir: %v", err)
+		log.Fatalf("[INIT] Failed to create tmp dir: %v", err)
 	}
 	log.Printf("[INIT] Temp directory: %s", tmpDir)
 	log.Printf("[INIT] index.html embedded: %d bytes", len(indexHTML))
@@ -45,63 +44,57 @@ func init() {
 	log.Printf("[INIT] terminal.js embedded: %d bytes", len(terminalJS))
 }
 
-// requestLogger middleware — log semua request
-func requestLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[REQUEST] %s %s", r.Method, r.URL.Path)
-		next.ServeHTTP(w, r)
-	})
-}
-
 func main() {
 	port := getEnvOrDefault("PORT", "8080")
+	log.SetPrefix(fmt.Sprintf("[%s] ", port))
 
-	// Wrap semua handler dengan request logger
 	mux := http.NewServeMux()
 
-	// Root — serve index.html
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+	// ── Root: GET / → index.html ──────────────────────────────
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[HANDLER] %s %s", r.Method, r.URL.Path)
+
+		// Favicon
 		if r.URL.Path == "/favicon.ico" || r.URL.Path == "/favicon.png" {
 			w.Header().Set("Content-Type", "image/svg+xml")
 			w.Write([]byte(faviconSVG))
 			return
 		}
+
+		// Semua GET request lainnya → index.html
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		fmt.Fprint(w, indexHTML)
 	})
 
-	// CSS handler
-	mux.HandleFunc("GET /static/css/terminal.css", func(w http.ResponseWriter, r *http.Request) {
+	// ── Static CSS ─────────────────────────────────────────────
+	mux.HandleFunc("/static/css/terminal.css", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[HANDLER] %s %s", r.Method, r.URL.Path)
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fmt.Fprint(w, terminalCSS)
 	})
 
-	// JS handler
-	mux.HandleFunc("GET /static/js/terminal.js", func(w http.ResponseWriter, r *http.Request) {
+	// ── Static JS ─────────────────────────────────────────────
+	mux.HandleFunc("/static/js/terminal.js", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[HANDLER] %s %s", r.Method, r.URL.Path)
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fmt.Fprint(w, terminalJS)
 	})
 
-	// /run handler (POST only)
-	mux.HandleFunc("POST /run", handleRun)
-	// Block GET /run
-	mux.HandleFunc("GET /run", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Not Found — use POST", http.StatusNotFound)
+	// ── Run: POST /run ────────────────────────────────────────
+	mux.HandleFunc("/run", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[HANDLER] %s %s", r.Method, r.URL.Path)
+		handleRun(w, r)
 	})
 
-	// Apply middleware
-	// Note: requestLogger wrapping after routes registered won't catch
-	// all paths the same way, so we inline logging in handlers instead
-
-	log.Printf("[SERVER] Starting on port %s", port)
+	log.Printf("[SERVER] Go CLI Simulator starting on port %s", port)
 	log.Printf("[SERVER] Open http://localhost:%s", port)
-	log.Printf("[SERVER] All files embedded — no external dependencies")
+	log.Printf("[SERVER] All static files embedded in binary")
 
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatalf("[SERVER] Error: %v", err)
+		log.Fatalf("[SERVER] ListenAndServe error: %v", err)
 	}
 }
 
@@ -123,19 +116,21 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[EXEC] Starting code execution (%d bytes)", len(code))
+	log.Printf("[EXEC] Starting (%d bytes, timeout 15s)", len(code))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	result := executeCodeCtx(ctx, code)
 
-	if result.stderr != "" && result.stderr != "TIMEOUT: Execution exceeded 15 seconds" {
-		log.Printf("[EXEC] Completed with error: %s", truncate(result.stderr, 100))
-	} else if result.stderr == "TIMEOUT: Execution exceeded 15 seconds" {
-		log.Printf("[EXEC] Timed out after 15 seconds")
+	if result.stderr != "" {
+		if result.stderr == "TIMEOUT: Execution exceeded 15 seconds" {
+			log.Printf("[EXEC] Result: TIMEOUT")
+		} else {
+			log.Printf("[EXEC] Result: ERROR — %s", truncate(result.stderr, 80))
+		}
 	} else {
-		log.Printf("[EXEC] Completed successfully: %s", truncate(result.stdout, 100))
+		log.Printf("[EXEC] Result: OK — %s", truncate(result.stdout, 80))
 	}
 
 	sendResponse(w, true, result.stdout, result.stderr)
@@ -147,7 +142,7 @@ type execResult struct {
 }
 
 // ============================================================
-// FIX: Write SEBELUM close, cleanup di EVERY error path
+// WRITE → CLOSE → DEFER REMOVE → EXECUTE
 // ============================================================
 func executeCodeCtx(ctx context.Context, code string) execResult {
 	// 1. Buat temp file
@@ -158,28 +153,27 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 		return execResult{stderr: "Failed to create temp file: " + err.Error()}
 	}
 	filePath := tmpFile.Name()
-	log.Printf("[EXEC] Temp file: %s", filePath)
 
-	// 2. Tulis kode (SEBELUM close)
+	// 2. Tulis kode
 	n, err := tmpFile.WriteString(code)
 	if err != nil {
 		tmpFile.Close()
 		os.Remove(filePath)
 		return execResult{stderr: "Failed to write code: " + err.Error()}
 	}
-	log.Printf("[EXEC] Wrote %d bytes to temp file", n)
+	log.Printf("[EXEC] Wrote %d bytes to %s", n, filePath)
 
-	// 3. Flush + tutup file
+	// 3. Flush + tutup
 	if err := tmpFile.Close(); err != nil {
 		os.Remove(filePath)
 		return execResult{stderr: "Failed to close temp file: " + err.Error()}
 	}
-	log.Printf("[EXEC] File closed, executing with 'go run'...")
 
-	// 4. Schedule cleanup (setelah execute selesai)
+	// 4. Cleanup setelah selesai
 	defer os.Remove(filePath)
 
-	// 5. Execute dengan context timeout
+	// 5. Execute
+	log.Printf("[EXEC] Running 'go run %s'...", filePath)
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "go", "run", filePath)
 	cmd.Dir = tmpDir
@@ -188,27 +182,22 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 
 	err = cmd.Run()
 
-	// 6. Cek timeout
 	if ctx.Err() == context.DeadlineExceeded {
-		log.Printf("[EXEC] TIMEOUT exceeded")
+		log.Printf("[EXEC] TIMEOUT")
 		return execResult{
 			stdout: stdout.String(),
 			stderr: "TIMEOUT: Execution exceeded 15 seconds",
 		}
 	}
 
-	// 7. Cek error lain
 	if err != nil {
 		errStr := strings.TrimSpace(stderr.String())
 		if errStr == "" {
 			errStr = err.Error()
 		}
-		log.Printf("[EXEC] Command error: %s", errStr)
 		return execResult{stdout: stdout.String(), stderr: errStr}
 	}
 
-	// 8. Success
-	log.Printf("[EXEC] Success")
 	return execResult{
 		stdout: stdout.String(),
 		stderr: strings.TrimSpace(stderr.String()),
