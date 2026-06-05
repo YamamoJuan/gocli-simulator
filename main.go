@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -130,27 +131,22 @@ type execResult struct {
 }
 
 // ============================================================
-// EXECUTE VIA WANDBOX API
+// EXECUTE VIA GO PLAYGROUND API
 // ============================================================
 func executeCodeCtx(ctx context.Context, code string) execResult {
-	// 1. Siapkan payload JSON untuk Wandbox API
-	payload := map[string]interface{}{
-		"compiler": "go-head", // Menggunakan versi Go terbaru di Wandbox
-		"code":     code,
-		"save":     false,     // Tidak perlu menyimpan kode di server mereka
-	}
-	
-	jsonPayload, err := json.Marshal(payload)
-	if err != nil {
-		return execResult{stderr: "Failed to prepare API payload: " + err.Error()}
-	}
+	// 1. Siapkan form data untuk Go Playground
+	data := url.Values{}
+	data.Set("version", "2")
+	data.Set("body", code)
+	data.Set("withVet", "true") // Nyalakan go vet untuk cek error tambahan
 
-	// 2. Buat HTTP Request ke Wandbox
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://wandbox.org/api/compile.json", bytes.NewBuffer(jsonPayload))
+	// 2. Buat HTTP Request
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://go.dev/_/compile", strings.NewReader(data.Encode()))
 	if err != nil {
 		return execResult{stderr: "Failed to create API request: " + err.Error()}
 	}
-	req.Header.Set("Content-Type", "application/json")
+	// Wajib pakai tipe konten ini untuk Go Playground
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	// 3. Eksekusi Request
 	client := &http.Client{}
@@ -160,34 +156,43 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 			log.Printf("[EXEC] TIMEOUT")
 			return execResult{stderr: "TIMEOUT: Execution exceeded 15 seconds"}
 		}
-		return execResult{stderr: "Failed to reach Wandbox API: " + err.Error()}
+		return execResult{stderr: "Failed to reach Go Playground API: " + err.Error()}
 	}
 	defer resp.Body.Close()
 
-	// 4. Parsing Respons dari Wandbox
-	var wandboxResp struct {
-		Status         string `json:"status"`
-		ProgramMessage string `json:"program_message"` // Output sukses (stdout)
-		ProgramError   string `json:"program_error"`   // Error saat running
-		CompilerError  string `json:"compiler_error"`  // Error saat compile (syntax error, dll)
+	// 4. Parsing Respons JSON dari Go Playground
+	var playResp struct {
+		Errors string `json:"Errors"`
+		Events []struct {
+			Message string `json:"Message"`
+			Kind    string `json:"Kind"` // Bisa "stdout" atau "stderr"
+		} `json:"Events"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&wandboxResp); err != nil {
-		return execResult{stderr: "Failed to parse API response: " + err.Error()}
+	if err := json.NewDecoder(resp.Body).Decode(&playResp); err != nil {
+		// Kalau gagal parse JSON, baca raw body-nya biar tau error aslinya
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return execResult{stderr: fmt.Sprintf("API Error (%d): %s", resp.StatusCode, string(bodyBytes))}
 	}
 
-	// 5. Gabungkan error jika ada (baik error syntax maupun runtime)
-	var finalStderr string
-	if wandboxResp.CompilerError != "" {
-		finalStderr += wandboxResp.CompilerError
+	// 5. Cek jika ada error kompilasi (misal typo syntax)
+	if playResp.Errors != "" {
+		return execResult{stderr: playResp.Errors}
 	}
-	if wandboxResp.ProgramError != "" {
-		finalStderr += wandboxResp.ProgramError
+
+	// 6. Gabungkan output dari event (stdout/stderr)
+	var stdout, stderr strings.Builder
+	for _, ev := range playResp.Events {
+		if ev.Kind == "stderr" {
+			stderr.WriteString(ev.Message)
+		} else {
+			stdout.WriteString(ev.Message)
+		}
 	}
 
 	return execResult{
-		stdout: wandboxResp.ProgramMessage,
-		stderr: strings.TrimSpace(finalStderr),
+		stdout: stdout.String(),
+		stderr: strings.TrimSpace(stderr.String()),
 	}
 }
 
