@@ -44,42 +44,37 @@ func init() {
 func main() {
 	port := getEnvOrDefault("PORT", "8080")
 
-	// ── Serve index.html ───────────────────────────────────────
+	// Serve index.html
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Jika POST /run, handle execute
 		if r.URL.Path == "/run" && r.Method == http.MethodPost {
 			handleRun(w, r)
 			return
 		}
-
-		// Favicon → serve inline SVG
 		if r.URL.Path == "/favicon.ico" || r.URL.Path == "/favicon.png" {
 			w.Header().Set("Content-Type", "image/svg+xml")
 			w.Write([]byte(faviconSVG))
 			return
 		}
-
-		// Serve index.html
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		fmt.Fprint(w, indexHTML)
 	})
 
-	// ── Serve CSS ──────────────────────────────────────────────
+	// Serve CSS
 	http.HandleFunc("/static/css/terminal.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fmt.Fprint(w, terminalCSS)
 	})
 
-	// ── Serve JS ───────────────────────────────────────────────
+	// Serve JS
 	http.HandleFunc("/static/js/terminal.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fmt.Fprint(w, terminalJS)
 	})
 
-	// ── Handle code execution ──────────────────────────────────
+	// Handle code execution
 	http.HandleFunc("/run", handleRun)
 
 	log.Printf("🌟 Web CLI Simulator running at http://localhost:%s", port)
@@ -124,7 +119,11 @@ type execResult struct {
 	stderr string
 }
 
+// ============================================================
+// FIX: Tulis SEBELUM close
+// ============================================================
 func executeCodeCtx(ctx context.Context, code string) execResult {
+	// Buat temp file
 	tmpDirMux.Lock()
 	tmpFile, err := os.CreateTemp(tmpDir, "code-*.go")
 	tmpDirMux.Unlock()
@@ -132,14 +131,26 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 		return execResult{stderr: "Failed to create temp file: " + err.Error()}
 	}
 	filePath := tmpFile.Name()
-	tmpFile.Close()
-	defer os.Remove(filePath)
 
+	// TULIS kode SEBELUM close
 	_, err = tmpFile.WriteString(code)
 	if err != nil {
+		tmpFile.Close()
+		os.Remove(filePath)
 		return execResult{stderr: "Failed to write code: " + err.Error()}
 	}
 
+	// Flush dan tutup
+	err = tmpFile.Close()
+	if err != nil {
+		os.Remove(filePath)
+		return execResult{stderr: "Failed to close temp file: " + err.Error()}
+	}
+
+	// Schedule cleanup
+	defer os.Remove(filePath)
+
+	// Execute
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "go", "run", filePath)
 	cmd.Dir = tmpDir
@@ -167,7 +178,7 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 }
 
 // ============================================================
-// RESPONSE HELPERS
+// HELPERS
 // ============================================================
 func sendResponse(w http.ResponseWriter, success bool, stdout, stderr string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -207,7 +218,4 @@ func getEnvOrDefault(key, def string) string {
 	return def
 }
 
-// ============================================================
-// FAVICON SVG
-// ============================================================
 const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#3fb950"><polygon points="1,1 23,12 1,23"/></svg>`
