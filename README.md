@@ -1,12 +1,12 @@
 # Go CLI Simulator
 
 A web-based terminal simulator for running Go code directly in the browser.
-Built with pure Golang (net/http) backend and vanilla HTML/CSS/JS frontend.
+Built with pure Golang (`net/http`) backend and vanilla HTML/CSS/JS frontend.
 No external JS libraries required.
 
 ---
 
-## Features
+## 🚀 Features
 
 ### 🌐 Interactive Web Terminal
 - Style Git Bash dengan dark theme
@@ -42,7 +42,7 @@ No external JS libraries required.
 | `date` | Show current date and time |
 | `echo <text>` | Echo text to terminal |
 | `go version` | Show Go version info |
-| Go code | Execute Go code directly |
+| *Go code* | Execute Go code directly |
 
 ### ⌨️ Keyboard Shortcuts
 
@@ -52,41 +52,39 @@ No external JS libraries required.
 | `Ctrl+L` | Clear terminal |
 | `Ctrl+C` | Cancel current input |
 | `↑` / `↓` | Navigate command history |
-| `Ctrl+R` (gonano) | Execute from editor |
-| `Ctrl+X` (gonano) | Exit editor |
-| `Tab` (gonano) | Smart indent |
-| `Esc` (gonano) | Cancel menu |
+| `Ctrl+R` | Execute from editor (gonano) |
+| `Ctrl+X` | Exit editor (gonano) |
+| `Tab` | Smart indent (gonano) |
+| `Esc` | Cancel menu (gonano) |
 
 ---
 
-## Tech Stack
-Backend
-├── Go 1.21+
-│   ├── net/http          — HTTP server
-│   ├── context           — Timeout / deadline
-│   ├── os/exec           — Execute 'go run'
-│   └── io / bytes / fmt  — I/O utilities
-│
+## 🛠️ Tech Stack
+
+### Backend
+```text
+Go 1.21+
+├── net/http          — HTTP server
+├── context           — Timeout / deadline
+├── os/exec           — Execute 'go run'
+└── io / bytes / fmt  — I/O utilities
 Frontend
-├── HTML5                — Semantic markup
-├── CSS3                 — Custom properties, flexbox
-│   └── Solarized Dark   — gonano color scheme
-└── Vanilla JS           — No external dependencies
-├── DOM manipulation
-├── Fetch API         — HTTP requests
-└── ES6+ features     — async/await, template literals
+Plaintext
+HTML5                 — Semantic markup
+├── CSS3              — Custom properties, flexbox
+│   └── Solarized     — gonano dark color scheme
+└── Vanilla JS        — No external dependencies
+    ├── DOM manipulation
+    ├── Fetch API     — HTTP requests
+    └── ES6+ features — async/await, template literals
+Dependencies:
 
-### Dependencies
+Backend (Go): Zero external dependencies — hanya standard library (stdlib).
 
-**Backend (Go):** Zero external dependencies — hanya stdlib.
+Frontend: Zero external dependencies — hanya browser native APIs.
 
-**Frontend:** Zero external dependencies — hanya browser native APIs.
-
----
-
-## Quick Start
-
-```bash
+🏁 Quick Start
+Bash
 # Clone atau cd ke project
 cd gocli-simulator
 
@@ -98,19 +96,18 @@ go run main.go
 
 # Buka browser
 # http://localhost:8080
-
-Deployment
+📦 Deployment
 Vercel (Serverless)
-bash
+Bash
 # Login Vercel
 vercel login
 
 # Deploy
 vercel --prod
-⚠️ Catatan: Vercel menggunakan model serverless yang memiliki limit waktu eksekusi. Untuk fitur go run secara penuh, gunakan VPS atau Docker.
+⚠️ Catatan: Vercel menggunakan model serverless yang memiliki limit waktu eksekusi. Untuk fitur go run secara penuh, disarankan menggunakan VPS atau Docker.
 
 Docker
-bash
+Bash
 # Build image
 docker build -t gocli-simulator .
 
@@ -120,17 +117,17 @@ docker run -p 8080:8080 --name gocli gocli-simulator
 # Buka browser
 # http://localhost:8080
 VPS / Server
-bash
+Bash
 # Build binary
 go build -o gocli-simulator main.go
 
 # Jalankan
 PORT=8080 ./gocli-simulator
 
-# Atau dengan systemd (linux)
+# Atau dengan systemd (Linux)
 sudo systemctl enable gocli
-Project Structure
-csharp
+📁 Project Structure
+Plaintext
 gocli-simulator/
 ├── main.go                  # Go backend (net/http server)
 ├── go.mod                   # Go module definition
@@ -144,26 +141,27 @@ gocli-simulator/
 ├── vercel.json              # Vercel serverless config
 ├── vercel.yaml              # Vercel CLI manifest
 └── .gitignore               # Git ignore rules
-API Reference
+🔌 API Reference
 POST /run
 Execute Go code and return output.
 
 Request:
 
-vbnet
+HTTP
 Content-Type: text/plain
-Body: <Go source code as string>
-Response:
 
-json
+<Go source code as string>
+Response (Success):
+
+JSON
 {
   "success": true,
   "stdout": "Hello, World!\n",
   "stderr": ""
 }
-Error:
+Response (Error):
 
-json
+JSON
 {
   "success": true,
   "stdout": "",
@@ -172,12 +170,5 @@ json
 GET /
 Serve the main HTML page.
 
-License
+📄 License
 MIT
-EOF
-
-echo "✅ README.md created with features + tech stack"
-echo ""
-echo "   Then run:"
-echo "   git add README.md && git commit -m "docs: add README with features and tech stack""
-
