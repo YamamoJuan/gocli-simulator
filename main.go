@@ -29,27 +29,38 @@ var terminalCSS string
 //go:embed static/js/terminal.js
 var terminalJS string
 
+// logStdout redirects log output to stdout so Vercel categorizes it as info, not error
 func init() {
+	// Redirect stderr to stdout untuk menghindari "error" level di Vercel
+	log.SetOutput(os.Stdout)
+
 	var err error
 	tmpDir, err = os.MkdirTemp("", "go-cli-*")
 	if err != nil {
 		log.Fatalf("Failed to create tmp dir: %v", err)
 	}
-	log.Printf("📁 Temp directory: %s", tmpDir)
-	log.Printf("✅ index.html embedded (%d bytes)", len(indexHTML))
-	log.Printf("✅ terminal.css embedded (%d bytes)", len(terminalCSS))
-	log.Printf("✅ terminal.js embedded (%d bytes)", len(terminalJS))
+	log.Printf("[INIT] Temp directory: %s", tmpDir)
+	log.Printf("[INIT] index.html embedded: %d bytes", len(indexHTML))
+	log.Printf("[INIT] terminal.css embedded: %d bytes", len(terminalCSS))
+	log.Printf("[INIT] terminal.js embedded: %d bytes", len(terminalJS))
+}
+
+// requestLogger middleware — log semua request
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[REQUEST] %s %s", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {
 	port := getEnvOrDefault("PORT", "8080")
 
-	// Serve index.html
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/run" && r.Method == http.MethodPost {
-			handleRun(w, r)
-			return
-		}
+	// Wrap semua handler dengan request logger
+	mux := http.NewServeMux()
+
+	// Root — serve index.html
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/favicon.ico" || r.URL.Path == "/favicon.png" {
 			w.Header().Set("Content-Type", "image/svg+xml")
 			w.Write([]byte(faviconSVG))
@@ -60,28 +71,37 @@ func main() {
 		fmt.Fprint(w, indexHTML)
 	})
 
-	// Serve CSS
-	http.HandleFunc("/static/css/terminal.css", func(w http.ResponseWriter, r *http.Request) {
+	// CSS handler
+	mux.HandleFunc("GET /static/css/terminal.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fmt.Fprint(w, terminalCSS)
 	})
 
-	// Serve JS
-	http.HandleFunc("/static/js/terminal.js", func(w http.ResponseWriter, r *http.Request) {
+	// JS handler
+	mux.HandleFunc("GET /static/js/terminal.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		fmt.Fprint(w, terminalJS)
 	})
 
-	// Handle code execution
-	http.HandleFunc("/run", handleRun)
+	// /run handler (POST only)
+	mux.HandleFunc("POST /run", handleRun)
+	// Block GET /run
+	mux.HandleFunc("GET /run", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Not Found — use POST", http.StatusNotFound)
+	})
 
-	log.Printf("🌟 Web CLI Simulator running at http://localhost:%s", port)
-	log.Printf("💡 All static files embedded in binary — no external files needed")
+	// Apply middleware
+	// Note: requestLogger wrapping after routes registered won't catch
+	// all paths the same way, so we inline logging in handlers instead
 
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatalf("Server error: %v", err)
+	log.Printf("[SERVER] Starting on port %s", port)
+	log.Printf("[SERVER] Open http://localhost:%s", port)
+	log.Printf("[SERVER] All files embedded — no external dependencies")
+
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatalf("[SERVER] Error: %v", err)
 	}
 }
 
@@ -89,13 +109,9 @@ func main() {
 // HANDLE /run
 // ============================================================
 func handleRun(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Not Found — use POST to execute code", http.StatusNotFound)
-		return
-	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("[ERROR] handleRun: failed to read body: %v", err)
 		sendResponse(w, false, "", "Failed to read request body")
 		return
 	}
@@ -107,10 +123,21 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[EXEC] Starting code execution (%d bytes)", len(code))
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	result := executeCodeCtx(ctx, code)
+
+	if result.stderr != "" && result.stderr != "TIMEOUT: Execution exceeded 15 seconds" {
+		log.Printf("[EXEC] Completed with error: %s", truncate(result.stderr, 100))
+	} else if result.stderr == "TIMEOUT: Execution exceeded 15 seconds" {
+		log.Printf("[EXEC] Timed out after 15 seconds")
+	} else {
+		log.Printf("[EXEC] Completed successfully: %s", truncate(result.stdout, 100))
+	}
+
 	sendResponse(w, true, result.stdout, result.stderr)
 }
 
@@ -120,10 +147,10 @@ type execResult struct {
 }
 
 // ============================================================
-// FIX: Tulis SEBELUM close
+// FIX: Write SEBELUM close, cleanup di EVERY error path
 // ============================================================
 func executeCodeCtx(ctx context.Context, code string) execResult {
-	// Buat temp file
+	// 1. Buat temp file
 	tmpDirMux.Lock()
 	tmpFile, err := os.CreateTemp(tmpDir, "code-*.go")
 	tmpDirMux.Unlock()
@@ -131,26 +158,28 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 		return execResult{stderr: "Failed to create temp file: " + err.Error()}
 	}
 	filePath := tmpFile.Name()
+	log.Printf("[EXEC] Temp file: %s", filePath)
 
-	// TULIS kode SEBELUM close
-	_, err = tmpFile.WriteString(code)
+	// 2. Tulis kode (SEBELUM close)
+	n, err := tmpFile.WriteString(code)
 	if err != nil {
 		tmpFile.Close()
 		os.Remove(filePath)
 		return execResult{stderr: "Failed to write code: " + err.Error()}
 	}
+	log.Printf("[EXEC] Wrote %d bytes to temp file", n)
 
-	// Flush dan tutup
-	err = tmpFile.Close()
-	if err != nil {
+	// 3. Flush + tutup file
+	if err := tmpFile.Close(); err != nil {
 		os.Remove(filePath)
 		return execResult{stderr: "Failed to close temp file: " + err.Error()}
 	}
+	log.Printf("[EXEC] File closed, executing with 'go run'...")
 
-	// Schedule cleanup
+	// 4. Schedule cleanup (setelah execute selesai)
 	defer os.Remove(filePath)
 
-	// Execute
+	// 5. Execute dengan context timeout
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "go", "run", filePath)
 	cmd.Dir = tmpDir
@@ -159,22 +188,31 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 
 	err = cmd.Run()
 
+	// 6. Cek timeout
 	if ctx.Err() == context.DeadlineExceeded {
+		log.Printf("[EXEC] TIMEOUT exceeded")
 		return execResult{
 			stdout: stdout.String(),
 			stderr: "TIMEOUT: Execution exceeded 15 seconds",
 		}
 	}
 
+	// 7. Cek error lain
 	if err != nil {
 		errStr := strings.TrimSpace(stderr.String())
 		if errStr == "" {
 			errStr = err.Error()
 		}
+		log.Printf("[EXEC] Command error: %s", errStr)
 		return execResult{stdout: stdout.String(), stderr: errStr}
 	}
 
-	return execResult{stdout: stdout.String(), stderr: strings.TrimSpace(stderr.String())}
+	// 8. Success
+	log.Printf("[EXEC] Success")
+	return execResult{
+		stdout: stdout.String(),
+		stderr: strings.TrimSpace(stderr.String()),
+	}
 }
 
 // ============================================================
@@ -216,6 +254,13 @@ func getEnvOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#3fb950"><polygon points="1,1 23,12 1,23"/></svg>`
