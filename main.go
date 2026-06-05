@@ -130,16 +130,14 @@ type execResult struct {
 }
 
 // ============================================================
-// EXECUTE VIA PISTON API
+// EXECUTE VIA WANDBOX API
 // ============================================================
 func executeCodeCtx(ctx context.Context, code string) execResult {
-	// 1. Siapkan payload JSON
+	// 1. Siapkan payload JSON untuk Wandbox API
 	payload := map[string]interface{}{
-		"language": "go",
-		"version":  "*",
-		"files": []map[string]string{
-			{"content": code},
-		},
+		"compiler": "go-head", // Menggunakan versi Go terbaru di Wandbox
+		"code":     code,
+		"save":     false,     // Tidak perlu menyimpan kode di server mereka
 	}
 	
 	jsonPayload, err := json.Marshal(payload)
@@ -147,8 +145,8 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 		return execResult{stderr: "Failed to prepare API payload: " + err.Error()}
 	}
 
-	// 2. Buat HTTP Request ke Piston
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://emkc.org/api/v2/piston/execute", bytes.NewBuffer(jsonPayload))
+	// 2. Buat HTTP Request ke Wandbox
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://wandbox.org/api/compile.json", bytes.NewBuffer(jsonPayload))
 	if err != nil {
 		return execResult{stderr: "Failed to create API request: " + err.Error()}
 	}
@@ -162,30 +160,34 @@ func executeCodeCtx(ctx context.Context, code string) execResult {
 			log.Printf("[EXEC] TIMEOUT")
 			return execResult{stderr: "TIMEOUT: Execution exceeded 15 seconds"}
 		}
-		return execResult{stderr: "Failed to reach Piston API: " + err.Error()}
+		return execResult{stderr: "Failed to reach Wandbox API: " + err.Error()}
 	}
 	defer resp.Body.Close()
 
-	// 4. Parsing Respons
-	var pistonResp struct {
-		Run struct {
-			Stdout string `json:"stdout"`
-			Stderr string `json:"stderr"`
-		} `json:"run"`
-		Message string `json:"message"`
+	// 4. Parsing Respons dari Wandbox
+	var wandboxResp struct {
+		Status         string `json:"status"`
+		ProgramMessage string `json:"program_message"` // Output sukses (stdout)
+		ProgramError   string `json:"program_error"`   // Error saat running
+		CompilerError  string `json:"compiler_error"`  // Error saat compile (syntax error, dll)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&pistonResp); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&wandboxResp); err != nil {
 		return execResult{stderr: "Failed to parse API response: " + err.Error()}
 	}
 
-	if pistonResp.Message != "" {
-		return execResult{stderr: "API Error: " + pistonResp.Message}
+	// 5. Gabungkan error jika ada (baik error syntax maupun runtime)
+	var finalStderr string
+	if wandboxResp.CompilerError != "" {
+		finalStderr += wandboxResp.CompilerError
+	}
+	if wandboxResp.ProgramError != "" {
+		finalStderr += wandboxResp.ProgramError
 	}
 
 	return execResult{
-		stdout: pistonResp.Run.Stdout,
-		stderr: strings.TrimSpace(pistonResp.Run.Stderr),
+		stdout: wandboxResp.ProgramMessage,
+		stderr: strings.TrimSpace(finalStderr),
 	}
 }
 
