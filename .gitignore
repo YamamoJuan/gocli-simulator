@@ -1,0 +1,16 @@
+gocli-simulator
+*.exe
+*.test
+*.out
+vendor/
+*.tmp
+*.temp
+.env
+.env.local
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+.vercel/
+.next/
