@@ -4,20 +4,14 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
-	"sync"
 	"time"
-)
-
-var (
-	tmpDir    string
-	tmpDirMux sync.Mutex
 )
 
 //go:embed index.html
@@ -33,12 +27,6 @@ func init() {
 	// Redirect ke stdout agar Vercel kategorikan sebagai info, bukan error
 	log.SetOutput(os.Stdout)
 
-	var err error
-	tmpDir, err = os.MkdirTemp("", "go-cli-*")
-	if err != nil {
-		log.Fatalf("[INIT] Failed to create tmp dir: %v", err)
-	}
-	log.Printf("[INIT] Temp directory: %s", tmpDir)
 	log.Printf("[INIT] index.html embedded: %d bytes", len(indexHTML))
 	log.Printf("[INIT] terminal.css embedded: %d bytes", len(terminalCSS))
 	log.Printf("[INIT] terminal.js embedded: %d bytes", len(terminalJS))
@@ -142,65 +130,62 @@ type execResult struct {
 }
 
 // ============================================================
-// WRITE → CLOSE → DEFER REMOVE → EXECUTE
+// EXECUTE VIA PISTON API
 // ============================================================
 func executeCodeCtx(ctx context.Context, code string) execResult {
-	// 1. Buat temp file
-	tmpDirMux.Lock()
-	tmpFile, err := os.CreateTemp(tmpDir, "code-*.go")
-	tmpDirMux.Unlock()
+	// 1. Siapkan payload JSON
+	payload := map[string]interface{}{
+		"language": "go",
+		"version":  "*",
+		"files": []map[string]string{
+			{"content": code},
+		},
+	}
+	
+	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		return execResult{stderr: "Failed to create temp file: " + err.Error()}
+		return execResult{stderr: "Failed to prepare API payload: " + err.Error()}
 	}
-	filePath := tmpFile.Name()
 
-	// 2. Tulis kode
-	n, err := tmpFile.WriteString(code)
+	// 2. Buat HTTP Request ke Piston
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://emkc.org/api/v2/piston/execute", bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		tmpFile.Close()
-		os.Remove(filePath)
-		return execResult{stderr: "Failed to write code: " + err.Error()}
+		return execResult{stderr: "Failed to create API request: " + err.Error()}
 	}
-	log.Printf("[EXEC] Wrote %d bytes to %s", n, filePath)
+	req.Header.Set("Content-Type", "application/json")
 
-	// 3. Flush + tutup
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(filePath)
-		return execResult{stderr: "Failed to close temp file: " + err.Error()}
-	}
-
-	// 4. Cleanup setelah selesai
-	defer os.Remove(filePath)
-
-	// 5. Execute
-	log.Printf("[EXEC] Running 'go run %s'...", filePath)
-	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "go", "run", filePath)
-	cmd.Dir = tmpDir
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		log.Printf("[EXEC] TIMEOUT")
-		return execResult{
-			stdout: stdout.String(),
-			stderr: "TIMEOUT: Execution exceeded 15 seconds",
+	// 3. Eksekusi Request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[EXEC] TIMEOUT")
+			return execResult{stderr: "TIMEOUT: Execution exceeded 15 seconds"}
 		}
+		return execResult{stderr: "Failed to reach Piston API: " + err.Error()}
+	}
+	defer resp.Body.Close()
+
+	// 4. Parsing Respons
+	var pistonResp struct {
+		Run struct {
+			Stdout string `json:"stdout"`
+			Stderr string `json:"stderr"`
+		} `json:"run"`
+		Message string `json:"message"`
 	}
 
-	if err != nil {
-		errStr := strings.TrimSpace(stderr.String())
-		if errStr == "" {
-			errStr = err.Error()
-		}
-		return execResult{stdout: stdout.String(), stderr: errStr}
+	if err := json.NewDecoder(resp.Body).Decode(&pistonResp); err != nil {
+		return execResult{stderr: "Failed to parse API response: " + err.Error()}
+	}
+
+	if pistonResp.Message != "" {
+		return execResult{stderr: "API Error: " + pistonResp.Message}
 	}
 
 	return execResult{
-		stdout: stdout.String(),
-		stderr: strings.TrimSpace(stderr.String()),
+		stdout: pistonResp.Run.Stdout,
+		stderr: strings.TrimSpace(pistonResp.Run.Stderr),
 	}
 }
 
