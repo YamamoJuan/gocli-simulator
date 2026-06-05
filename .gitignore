@@ -14,3 +14,15 @@ vendor/
 Thumbs.db
 .vercel/
 .next/
+
+# Railway / Docker
+.dockerignore
+Dockerfile
+railway.json
+
+# Build output
+gocli-simulator
+
+# Setup script
+deploy.sh
+setup.sh
